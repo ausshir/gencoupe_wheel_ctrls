@@ -11,7 +11,8 @@ const int INPUT_PIN = A2;
 const int NUM_SAMPLES = 5;
 
 // USB HID Toggle
-#define USE_USB_HID false
+// Serial debugging not available in this mode
+#define USE_USB_HID true
 
 #if USE_USB_HID
 // Report IDs
@@ -126,6 +127,8 @@ void loop() {
       // Send HID report via BLE
       if (msg == "vol up") blehid.consumerKeyPress(HID_USAGE_CONSUMER_VOLUME_INCREMENT);
       else if (msg == "vol dn") blehid.consumerKeyPress(HID_USAGE_CONSUMER_VOLUME_DECREMENT);
+      else if (msg == "prev") blehid.consumerKeyPress(HID_USAGE_CONSUMER_SCAN_PREVIOUS);
+      else if (msg == "next") blehid.consumerKeyPress(HID_USAGE_CONSUMER_SCAN_NEXT);
 
       delay(10);
 
@@ -136,6 +139,8 @@ void loop() {
       if (usb_hid.ready()) {
         if (msg == "vol up") usb_hid.sendReport16(RID_CONSUMER_CONTROL, HID_USAGE_CONSUMER_VOLUME_INCREMENT);
         else if (msg == "vol dn") usb_hid.sendReport16(RID_CONSUMER_CONTROL, HID_USAGE_CONSUMER_VOLUME_DECREMENT);
+        else if (msg == "prev") usb_hid.sendReport16(RID_CONSUMER_CONTROL, HID_USAGE_CONSUMER_SCAN_PREVIOUS);
+        else if (msg == "next") usb_hid.sendReport16(RID_CONSUMER_CONTROL, HID_USAGE_CONSUMER_SCAN_NEXT);
 
         delay(10);
 
