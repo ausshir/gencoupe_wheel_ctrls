@@ -6,16 +6,12 @@ BLEDis bledis;
 BLEHidAdafruit blehid;
 
 // LED and Input Configuration
-const int ledPin = LED_BUILTIN;
 const int INPUT_PIN = A2;
 const int NUM_SAMPLES = 5;
 
-// USB HID Toggle
-// Serial debugging not available in this mode
-#define USE_USB_HID true
+#define USE_SERIAL false
 
-#if USE_USB_HID
-// Report IDs
+// HID Report IDs
 enum {
   RID_KEYBOARD = 1,
   RID_CONSUMER_CONTROL
@@ -28,52 +24,56 @@ uint8_t const desc_hid_report[] = {
 };
 
 Adafruit_USBD_HID usb_hid;
-#endif
+
+enum HidType {
+  HID_NONE,
+  HID_CONSUMER,
+  HID_KEYBOARD,
+  HID_KEYBOARD_MOD
+};
 
 // Command Mapping
 struct CommandRange {
   const char* label;
   int min;
   int max;
+  HidType type;
+  uint16_t code;     // consumer usage or keyboard key
+  uint8_t modifier;  // keyboard modifier (0 if none)
 };
 
 CommandRange commandMap[] = {
-  {"next",    51, 124},
-  {"prev",   151, 249},
-  {"mode",   276, 349},
-  {"mute",   376, 449},
-  {"vol up", 476, 524},
-  {"vol dn", 551, 624},
-  {"voice",  651, 689},
-  {"hangup", 721, 809},
-  {"answer", 831, 899}
+  {"next",    51, 124, HID_CONSUMER, HID_USAGE_CONSUMER_SCAN_NEXT, 0},
+  {"prev",   151, 249, HID_CONSUMER, HID_USAGE_CONSUMER_SCAN_PREVIOUS, 0},
+  {"mode",   276, 349, HID_KEYBOARD, HID_KEY_HOME, 0},
+  {"mute",   376, 449, HID_CONSUMER, HID_USAGE_CONSUMER_MUTE, 0},
+  {"vol up", 476, 524, HID_CONSUMER, HID_USAGE_CONSUMER_VOLUME_INCREMENT, 0},
+  {"vol dn", 551, 624, HID_CONSUMER, HID_USAGE_CONSUMER_VOLUME_DECREMENT, 0},
+  {"voice", 651, 689, HID_KEYBOARD, 0, KEYBOARD_MODIFIER_LEFTGUI}, // Assistant
+  {"hangup", 721, 809, HID_KEYBOARD, HID_KEY_ESCAPE, 0},           // Back
+  {"answer", 831, 899, HID_KEYBOARD_MOD, HID_KEY_TAB, KEYBOARD_MODIFIER_LEFTALT} // Task switcher
 };
 
-const int NUM_COMMANDS = sizeof(commandMap) / sizeof(commandMap[0]);
+const int NUM_COMMANDS = sizeof(commandMap)/sizeof(commandMap[0]);
 String last_msg = "";
 
 void setup() {
-  pinMode(ledPin, OUTPUT);
+
+#if !USE_SERIAL
+  Serial.end();
+#endif
+
+  pinMode(LED_RED, OUTPUT);
+  pinMode(LED_GREEN, OUTPUT);
   pinMode(INPUT_PIN, INPUT);
 
-  Serial.begin(115200);
-  while (!Serial) delay(10);
-  Serial.println("GC Wheel Control - Starting");
-
-#if USE_USB_HID
-  TinyUSBDevice.begin(0);
+  // HID setup
   usb_hid.setPollInterval(2);
   usb_hid.setReportDescriptor(desc_hid_report, sizeof(desc_hid_report));
   usb_hid.setStringDescriptor("TinyUSB HID Composite");
   usb_hid.begin();
 
-  if (TinyUSBDevice.mounted()) {
-    TinyUSBDevice.detach();
-    delay(10);
-    TinyUSBDevice.attach();
-  }
-#endif
-
+  // BLE setup
   Bluefruit.begin();
   Bluefruit.setTxPower(4);
 
@@ -83,12 +83,18 @@ void setup() {
 
   blehid.begin();
   startAdv();
+
+#if USE_SERIAL
+  Serial.begin(115200);
+  Serial.println("GC Wheel Control - Starting");
+#endif
+
 }
 
 void startAdv() {
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
   Bluefruit.Advertising.addTxPower();
-  Bluefruit.Advertising.addAppearance(BLE_APPEARANCE_HID_KEYBOARD);
+  Bluefruit.Advertising.addAppearance(BLE_APPEARANCE_GENERIC_HID);
   Bluefruit.Advertising.addService(blehid);
   Bluefruit.Advertising.addName();
 
@@ -99,11 +105,12 @@ void startAdv() {
 }
 
 void loop() {
-  digitalWrite(ledPin, HIGH);
+
+  digitalWrite(LED_RED, HIGH);
 
   // Sample analog input
   int total = 0;
-  for (int i = 0; i < NUM_SAMPLES; i++) {
+  for (int i=0; i<NUM_SAMPLES; i++) {
     total += analogRead(INPUT_PIN);
     delay(1);
   }
@@ -111,7 +118,7 @@ void loop() {
 
   // Detect command
   String msg = "unk";
-  for (int i = 0; i < NUM_COMMANDS; i++) {
+  for (int i=0; i<NUM_COMMANDS; i++) {
     if (avg >= commandMap[i].min && avg <= commandMap[i].max) {
       msg = commandMap[i].label;
       break;
@@ -121,36 +128,35 @@ void loop() {
   // If command changed, act on it
   if (msg != last_msg) {
     last_msg = msg;
+    #if USE_SERIAL
+    Serial.println("Key = " + msg + " val=" + String(avg));
+    #endif
+
     if (msg != "unk") {
-      Serial.println("Key = " + msg + " val=" + String(avg));
+      digitalWrite(LED_GREEN, HIGH);
+      for (int i=0; i<NUM_COMMANDS; i++) {
+        if (msg == commandMap[i].label) {
+          CommandRange &cmd = commandMap[i];
 
-      // Send HID report via BLE
-      if (msg == "vol up") blehid.consumerKeyPress(HID_USAGE_CONSUMER_VOLUME_INCREMENT);
-      else if (msg == "vol dn") blehid.consumerKeyPress(HID_USAGE_CONSUMER_VOLUME_DECREMENT);
-      else if (msg == "prev") blehid.consumerKeyPress(HID_USAGE_CONSUMER_SCAN_PREVIOUS);
-      else if (msg == "next") blehid.consumerKeyPress(HID_USAGE_CONSUMER_SCAN_NEXT);
+          if (cmd.type == HID_CONSUMER) {
 
-      delay(10);
-
-      blehid.keyRelease();
-      blehid.consumerKeyRelease();
-
-#if USE_USB_HID
-      if (usb_hid.ready()) {
-        if (msg == "vol up") usb_hid.sendReport16(RID_CONSUMER_CONTROL, HID_USAGE_CONSUMER_VOLUME_INCREMENT);
-        else if (msg == "vol dn") usb_hid.sendReport16(RID_CONSUMER_CONTROL, HID_USAGE_CONSUMER_VOLUME_DECREMENT);
-        else if (msg == "prev") usb_hid.sendReport16(RID_CONSUMER_CONTROL, HID_USAGE_CONSUMER_SCAN_PREVIOUS);
-        else if (msg == "next") usb_hid.sendReport16(RID_CONSUMER_CONTROL, HID_USAGE_CONSUMER_SCAN_NEXT);
-
-        delay(10);
-
-        usb_hid.sendReport16(RID_CONSUMER_CONTROL, 0);
-        usb_hid.sendReport16(RID_KEYBOARD, 0);
+            usb_hid.sendReport16(RID_CONSUMER_CONTROL, cmd.code);
+            delay(10);
+            usb_hid.sendReport16(RID_CONSUMER_CONTROL, 0);
+          }
+          else if (cmd.type == HID_KEYBOARD || cmd.type == HID_KEYBOARD_MOD) {
+            uint8_t keys[6] = { (uint8_t)cmd.code, 0, 0, 0, 0, 0 };
+            usb_hid.keyboardReport(RID_KEYBOARD, cmd.modifier, keys);
+            delay(10);
+            usb_hid.keyboardRelease(RID_KEYBOARD);
+          }
+          break;
+        }
       }
-#endif
+      digitalWrite(LED_GREEN, LOW);
     }
   }
-  digitalWrite(ledPin, LOW);
 
+  digitalWrite(LED_RED, LOW);
   delay(200);
 }
