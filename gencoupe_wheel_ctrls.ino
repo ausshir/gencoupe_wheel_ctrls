@@ -1,15 +1,15 @@
 #include "Adafruit_TinyUSB.h"
 #include <bluefruit.h>
 
+#define USE_SERIAL true
+
 // BLE Services
 BLEDis bledis;
 BLEHidAdafruit blehid;
 
-// LED and Input Configuration
+// Input Configuration
 const int INPUT_PIN = A2;
 const int NUM_SAMPLES = 5;
-
-#define USE_SERIAL false
 
 // HID Report IDs
 enum {
@@ -45,8 +45,8 @@ struct CommandRange {
 CommandRange commandMap[] = {
   {"next",    51, 124, HID_CONSUMER, HID_USAGE_CONSUMER_SCAN_NEXT, 0},
   {"prev",   151, 249, HID_CONSUMER, HID_USAGE_CONSUMER_SCAN_PREVIOUS, 0},
-  {"mode",   276, 349, HID_KEYBOARD, HID_KEY_HOME, 0},
-  {"mute",   376, 449, HID_CONSUMER, HID_USAGE_CONSUMER_MUTE, 0},
+  {"mode",   276, 349, HID_KEYBOARD, HID_KEY_ENTER, KEYBOARD_MODIFIER_LEFTGUI}, // Home
+  {"mute",   376, 449, HID_CONSUMER, HID_USAGE_CONSUMER_PLAY_PAUSE, 0},
   {"vol up", 476, 524, HID_CONSUMER, HID_USAGE_CONSUMER_VOLUME_INCREMENT, 0},
   {"vol dn", 551, 624, HID_CONSUMER, HID_USAGE_CONSUMER_VOLUME_DECREMENT, 0},
   {"voice", 651, 689, HID_KEYBOARD, 0, KEYBOARD_MODIFIER_LEFTGUI}, // Assistant
@@ -66,6 +66,15 @@ void setup() {
   pinMode(LED_RED, OUTPUT);
   pinMode(LED_GREEN, OUTPUT);
   pinMode(INPUT_PIN, INPUT);
+
+  delay(2000);  // Give USB host time to stabilize
+
+  TinyUSBDevice.begin();
+  if (TinyUSBDevice.mounted()) {
+    TinyUSBDevice.detach();
+    delay(10);
+    TinyUSBDevice.attach();
+  }
 
   // HID setup
   usb_hid.setPollInterval(2);
